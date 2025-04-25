@@ -1,9 +1,11 @@
 from email.policy import default
 from math import fabs
 from typing import List
+from tqdm import tqdm
 
 from sympy import false
 from torchvision import models
+import torch.multiprocessing as mp
 
 
 def init_model(model_name: str):
@@ -43,7 +45,7 @@ def parse_args():
         default=152064,
     )
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
     parser.add_argument(
         "--device",
@@ -112,14 +114,71 @@ def init_wandb(args):
     wandb.watch_called = False
 
 
-# 训练函数
-def train(model, dataloader, criterion, optimizer, device, epoch):
+def compute_batch_stats(args):
+    """每个进程计算的函数"""
+    batch, device = args
+    inputs = batch[0].float().to(device)
+    return (
+        inputs.mean([0, 2, 3]).sum().item(),  # 均值
+        inputs.std([0, 2, 3]).sum().item(),  # 标准差
+        inputs.size(0),  # 样本数
+    )
+
+
+def compute_dataset_stats(dataset, num_batches=100, num_workers=4):
+    """多进程计算数据集的均值和标准差"""
+    # 初始化多进程
+    mp.set_start_method("spawn", force=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 准备数据批次
+    loader = dataset.get_stream_loader(batch_size=32)
+    batches = [(batch, device) for idx, batch in enumerate(loader) if idx < num_batches]
+
+    # 多进程计算
+    mean = 0.0
+    std = 0.0
+    total_samples = 0
+
+    with mp.Pool(processes=num_workers) as pool:
+        results = list(
+            tqdm(
+                pool.imap(compute_batch_stats, batches),
+                total=len(batches),
+                desc="多进程计算统计量",
+            )
+        )
+
+    # 汇总结果
+    for batch_mean, batch_std, batch_samples in results:
+        mean += batch_mean
+        std += batch_std
+        total_samples += batch_samples
+
+    mean /= total_samples
+    std /= total_samples
+    return mean, std
+
+
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ReduceLROnPlateau
+
+
+def train(model, dataloader, criterion, optimizer, device, epoch, scheduler=None):
     model.train()
     total_loss = 0.0
     correct = 0
+    total_samples = 0
+    batch_losses = []
+    batch_accuracies = []
 
-    for inputs, labels in dataloader:
+    # 手动标准化参数（假设已预计算）
+    mean, std = compute_dataset_stats(dataloader.dataset, 4000)
+
+    for batch_idx, (inputs, labels) in enumerate(
+        dataloader.dataset.get_stream_loader(32)
+    ):
         inputs, labels = inputs.to(device), labels.to(device)
+        inputs = (inputs.float() - mean) / std  # 标准化
 
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -127,16 +186,48 @@ def train(model, dataloader, criterion, optimizer, device, epoch):
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item()
+        # 记录指标
+        batch_loss = loss.item()
+        total_loss += batch_loss * inputs.size(0)
         _, preds = torch.max(outputs, 1)
-        correct += torch.sum(preds == labels.data).item()
+        batch_correct = (preds == labels).sum().item()
+        correct += batch_correct
+        batch_accuracy = batch_correct / inputs.size(0)
 
-    avg_loss = total_loss / len(dataloader)
+        batch_losses.append(batch_loss)
+        batch_accuracies.append(batch_accuracy)
+
+        # 动态更新学习率（每个batch或每个epoch）
+        if scheduler is not None:
+            if isinstance(scheduler, ReduceLROnPlateau):
+                scheduler.step(batch_loss)  # 基于损失更新
+            else:
+                scheduler.step()  # 基于步数更新
+
+        # 记录学习率和指标
+        wandb.log(
+            {
+                "batch_train_loss": batch_loss,
+                "batch_train_accuracy": batch_accuracy,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "epoch": epoch,
+                "batch": batch_idx,
+            }
+        )
+
+        if batch_idx % 10 == 0:
+            print(
+                f"Epoch {epoch} Batch {batch_idx} | Loss: {batch_loss:.4f} | Acc: {batch_accuracy:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}"
+            )
+
+    # Epoch总结
+    avg_loss = total_loss / len(dataloader.dataset)
     accuracy = correct / len(dataloader.dataset)
 
     wandb.log({"train_loss": avg_loss, "train_accuracy": accuracy, "epoch": epoch})
 
-    print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+    print(f"\nEpoch {epoch} Summary: Loss: {avg_loss:.4f} | Acc: {accuracy:.4f}")
+    return avg_loss, accuracy, batch_losses, batch_accuracies
 
 
 # 主函数
@@ -167,14 +258,17 @@ def main():
     # 训练配置
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=3)
 
     # 训练循环
     for epoch in range(1, args.epochs + 1):
-        train(model, train_loader, criterion, optimizer, device, epoch)
+        avg_loss, accuracy, _, _ = train(
+            model, train_loader, criterion, optimizer, device, epoch, scheduler
+        )
 
     # 保存模型
-    torch.save(model.state_dict(), "grayscale_resnet50.pth")
-    wandb.save("grayscale_resnet50.pth")
+    torch.save(model.state_dict(), "token_resnet50.pth")
+    wandb.save("token_resnet50.pth")
 
 
 if __name__ == "__main__":

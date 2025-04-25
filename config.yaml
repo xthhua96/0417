@@ -1,0 +1,5 @@
+dataset:
+  DARWIN_DATA_DIR: "/Users/a58/MyProject/minimind/dataset/"
+  LINUX_DATA_DIR: "/workspace/dataset/"
+  file_name: "pretrain_hq.jsonl"
+  tokenizer: "Qwen/QwQ-32B"
