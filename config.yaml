@@ -1,5 +1,11 @@
-dataset:
-  DARWIN_DATA_DIR: "/Users/a58/MyProject/minimind/dataset/"
-  LINUX_DATA_DIR: "/workspace/dataset/"
+raw_data:
+  darwin_data_dir: "/Users/a58/MyProject/minimind/dataset/"
+  linix_data_dir: "/workspace/dataset/"
   file_name: "pretrain_hq.jsonl"
   tokenizer: "Qwen/QwQ-32B"
+
+dataset:
+  batch_size: 256
+  darwin_data_dir: "/Users/a58/python/0417"
+  linux_data_dir: "/workspace/dataset/"
+  file_name: "pretrain_hq.h5"
