@@ -1,6 +1,6 @@
 raw_data:
   darwin_data_dir: "/Users/a58/MyProject/minimind/dataset/"
-  linix_data_dir: "/workspace/dataset/"
+  linux_data_dir: "/workspace/dataset/"
   file_name: "pretrain_hq.jsonl"
   tokenizer: "Qwen/QwQ-32B"
 

@@ -76,8 +76,7 @@ def init_dataset():
                 label_ds.resize((new_size,))
                 label_ds[current_size:new_size] = buffer_labels
 
-        h5file.create_dataset("number", data=number)
-
+        h5file.attrs["number"] = number
 
 if __name__ == "__main__":
     init_dataset()

@@ -17,7 +17,6 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from modelscope import AutoTokenizer
 
-from stream_dataset import BackgroundGenerator
 from tool import load_config
 from tool import get_paths
 
@@ -168,7 +167,7 @@ class TokenDataset(Dataset):
         self,
         local_rank: int = 0,
         window_size: int = 1024,
-        vocab_peak: int = (256, 265),
+        vocab_peak: int = (256, 256),
     ):
         super(TokenDataset, self).__init__()
         config = load_config()
@@ -178,7 +177,7 @@ class TokenDataset(Dataset):
         self.vocab_peak = vocab_peak
         self.dataset_file = h5py.File(dataset_path, "r")
         self.labels = self.dataset_file["labels"]
-        self.num = self.dataset_file["number"]
+        self.num = self.dataset_file.attrs["number"]
 
     def __len__(self) -> int:
         return self.num
@@ -269,6 +268,7 @@ if __name__ == "__main__":
     vocab_peak = 256 * 256
     data_type = DatasetType.PRETRAIN_HQ
     token_dataset = TokenDataset()
-    print(token_dataset[0][0].shape)
+    # print(token_dataset[0])
+    print(token_dataset.num)
     # print(f"样本数: {count_num}")
     # print(token_dataset[0][0].shape)
