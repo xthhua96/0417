@@ -1,3 +1,4 @@
 __pycache__
 wandb/
 train.log
+pretrain_hq.h5
