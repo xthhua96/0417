@@ -78,5 +78,6 @@ def init_dataset():
 
         h5file.attrs["number"] = number
 
+
 if __name__ == "__main__":
     init_dataset()

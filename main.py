@@ -2,7 +2,6 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torchvision import models
 import wandb
 import math
@@ -30,13 +29,25 @@ def init_model(model_name: str, default_weight: bool = True):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=false, help="Path to dataset")
-    parser.add_argument("--num_classes", type=int, default=152064, help="Number of classes")
+    parser.add_argument(
+        "--num_classes", type=int, default=152064, help="Number of classes"
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda", "mps"], help="Device selection")
-    parser.add_argument("--resume", action="store_true", help="Resume training from checkpoint")  # 🔥 新增
-    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints", help="Checkpoint directory")  # 🔥 新增
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps"],
+        help="Device selection",
+    )
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume training from checkpoint"
+    )  # 🔥 新增
+    parser.add_argument(
+        "--checkpoint_dir", type=str, default="checkpoints", help="Checkpoint directory"
+    )  # 🔥 新增
     return parser.parse_args()
 
 
@@ -59,12 +70,15 @@ def init_wandb(args):
 def save_checkpoint(model, optimizer, scheduler, epoch, checkpoint_dir):
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pth")
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'scheduler_state_dict': scheduler.state_dict(),
-    }, checkpoint_path)
+    torch.save(
+        {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+        },
+        checkpoint_path,
+    )
     print(f"✅ Saved checkpoint: {checkpoint_path}")
     wandb.save(checkpoint_path)
 
@@ -112,7 +126,9 @@ def train(model, dataloader, criterion, optimizer, device, epoch, scheduler=None
 
         # 记录指标
         batch_loss = loss.item()
-        batch_ppl = math.exp(batch_loss) if batch_loss < 20 else float('inf')  # 防止爆掉
+        batch_ppl = (
+            math.exp(batch_loss) if batch_loss < 20 else float("inf")
+        )  # 防止爆掉
         total_loss += batch_loss * inputs.size(0)
         _, preds = torch.max(outputs, 1)
         batch_correct = (preds == labels).sum().item()
@@ -129,14 +145,16 @@ def train(model, dataloader, criterion, optimizer, device, epoch, scheduler=None
             else:
                 scheduler.step()
 
-        wandb.log({
-            "batch_train_loss": batch_loss,
-            "batch_train_accuracy": batch_accuracy,
-            "batch_train_ppl": batch_ppl,
-            "learning_rate": optimizer.param_groups[0]["lr"],
-            "epoch": epoch,
-            "batch": batch_idx,
-        })
+        wandb.log(
+            {
+                "batch_train_loss": batch_loss,
+                "batch_train_accuracy": batch_accuracy,
+                "batch_train_ppl": batch_ppl,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "epoch": epoch,
+                "batch": batch_idx,
+            }
+        )
 
         if batch_idx % 10 == 0:
             print(
@@ -145,16 +163,20 @@ def train(model, dataloader, criterion, optimizer, device, epoch, scheduler=None
 
     avg_loss = total_loss / len(dataloader.dataset)
     avg_accuracy = correct / len(dataloader.dataset)
-    avg_ppl = math.exp(avg_loss) if avg_loss < 20 else float('inf')
+    avg_ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
 
-    wandb.log({
-        "train_loss": avg_loss,
-        "train_accuracy": avg_accuracy,
-        "train_ppl": avg_ppl,
-        "epoch": epoch
-    })
+    wandb.log(
+        {
+            "train_loss": avg_loss,
+            "train_accuracy": avg_accuracy,
+            "train_ppl": avg_ppl,
+            "epoch": epoch,
+        }
+    )
 
-    print(f"\n✅ Epoch {epoch} Summary: Loss: {avg_loss:.4f} | PPL: {avg_ppl:.2f} | Acc: {avg_accuracy:.4f}")
+    print(
+        f"\n✅ Epoch {epoch} Summary: Loss: {avg_loss:.4f} | PPL: {avg_ppl:.2f} | Acc: {avg_accuracy:.4f}"
+    )
     return avg_loss, avg_accuracy
 
 
@@ -191,7 +213,12 @@ def main():
     start_epoch = 1
 
     if args.resume:
-        start_epoch = load_latest_checkpoint(model, optimizer, scheduler, args.checkpoint_dir, device) + 1
+        start_epoch = (
+            load_latest_checkpoint(
+                model, optimizer, scheduler, args.checkpoint_dir, device
+            )
+            + 1
+        )
 
     # 训练循环
     for epoch in range(start_epoch, args.epochs + 1):
