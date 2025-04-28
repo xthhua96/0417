@@ -30,8 +30,12 @@ class DataLoaderX(DataLoader):
             self.iter = None
             return
         with torch.cuda.stream(self.stream):
-            for k in range(len(self.batch)):
-                self.batch[k] = self.batch[k].to(self.local_rank, non_blocking=True)
+            # for k in range(len(self.batch)):
+            #     self.batch[k] = self.batch[k].to(self.local_rank, non_blocking=True)
+            features, labels = self.batch
+            features = features.to(self.local_rank, non_blocking=True)
+            labels = labels.to(self.local_rank, non_blocking=True)
+            self.batch = features, labels
 
     def __next__(self):
         torch.cuda.current_stream().wait_stream(self.stream)
