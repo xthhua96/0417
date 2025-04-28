@@ -1,4 +1,5 @@
 import os
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,6 +10,8 @@ import argparse
 from sympy import false
 from torchvision import models
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
+from torchmetrics.classification import Accuracy
+from torchmetrics import MeanMetric
 
 
 def init_model(model_name: str, default_weight: bool = True):
@@ -33,7 +36,7 @@ def parse_args():
         "--num_classes", type=int, default=152064, help="Number of classes"
     )
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument(
         "--device",
@@ -109,76 +112,111 @@ def load_latest_checkpoint(model, optimizer, scheduler, checkpoint_dir, device):
 
 def train(model, dataloader, criterion, optimizer, device, epoch, scheduler=None):
     model.train()
-    total_loss = 0.0
-    correct = 0
-    batch_losses = []
-    batch_accuracies = []
-    batch_ppls = []
 
-    for batch_idx, (inputs, labels) in enumerate(dataloader):
-        inputs, labels = inputs.to(device), labels.to(device)
+    loss_metric = MeanMetric().to(device)
+    acc_metric = Accuracy(task="multiclass", num_classes=152064).to(device)
+    total_samples = 0
 
+    for batch_idx, batch in enumerate(dataloader):
+        inputs, labels = batch[0].to(device), batch[1].to(device)
         optimizer.zero_grad()
+
         outputs = model(inputs)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
-        # 记录指标
-        batch_loss = loss.item()
-        batch_ppl = (
-            math.exp(batch_loss) if batch_loss < 20 else float("inf")
-        )  # 防止爆掉
-        total_loss += batch_loss * inputs.size(0)
-        _, preds = torch.max(outputs, 1)
-        batch_correct = (preds == labels).sum().item()
-        correct += batch_correct
-        batch_accuracy = batch_correct / inputs.size(0)
+        # 更新指标
+        batch_size = inputs.size(0)
+        preds = torch.argmax(outputs, dim=1)
 
-        batch_losses.append(batch_loss)
-        batch_accuracies.append(batch_accuracy)
-        batch_ppls.append(batch_ppl)
+        loss_metric.update(loss.detach(), weight=batch_size)
+        acc_metric.update(preds, labels)
 
+        total_samples += batch_size
+
+        # Scheduler按batch调
         if scheduler is not None:
-            if isinstance(scheduler, ReduceLROnPlateau):
-                scheduler.step(batch_loss)
-            else:
-                scheduler.step()
+            if hasattr(scheduler, "step"):
+                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    scheduler.step(loss)
+                else:
+                    scheduler.step()
 
-        wandb.log(
-            {
+        # logging per batch
+        if batch_idx % 10 == 0:
+            batch_loss = loss.item()
+            batch_acc = (preds == labels).float().mean().item()
+
+            wandb.log({
                 "batch_train_loss": batch_loss,
-                "batch_train_accuracy": batch_accuracy,
-                "batch_train_ppl": batch_ppl,
+                "batch_train_accuracy": batch_acc,
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "epoch": epoch,
                 "batch": batch_idx,
-            }
-        )
+            })
 
-        if batch_idx % 10 == 0:
             print(
-                f"Epoch {epoch} Batch {batch_idx} | Loss: {batch_loss:.4f} | PPL: {batch_ppl:.2f} | Acc: {batch_accuracy:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}"
+                f"Epoch {epoch} Batch {batch_idx} | Loss: {batch_loss:.4f} | Acc: {batch_acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}"
             )
 
-    avg_loss = total_loss / len(dataloader.dataset)
-    avg_accuracy = correct / len(dataloader.dataset)
-    avg_ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
+    # 计算整体
+    avg_loss = loss_metric.compute().item()
+    avg_accuracy = acc_metric.compute().item()
 
-    wandb.log(
-        {
-            "train_loss": avg_loss,
-            "train_accuracy": avg_accuracy,
-            "train_ppl": avg_ppl,
-            "epoch": epoch,
-        }
-    )
+    wandb.log({
+        "train_loss": avg_loss,
+        "train_accuracy": avg_accuracy,
+        "epoch": epoch,
+    })
 
-    print(
-        f"\n✅ Epoch {epoch} Summary: Loss: {avg_loss:.4f} | PPL: {avg_ppl:.2f} | Acc: {avg_accuracy:.4f}"
-    )
+    print(f"\n✅ Epoch {epoch} Summary: Loss: {avg_loss:.4f} | Acc: {avg_accuracy:.4f}")
     return avg_loss, avg_accuracy
 
+
+
+def validate(model, dataloader, criterion, device, epoch):
+    model.eval()
+
+    loss_metric = MeanMetric().to(device)
+    acc_metric = Accuracy(task="multiclass", num_classes=model.num_classes).to(device)
+    total_samples = 0
+
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(dataloader):
+            inputs, labels = batch[0].to(device), batch[1].to(device)
+
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            batch_size = inputs.size(0)
+            preds = torch.argmax(outputs, dim=1)
+
+            loss_metric.update(loss, weight=batch_size)
+            acc_metric.update(preds, labels)
+
+            total_samples += batch_size
+
+            if batch_idx % 10 == 0:
+                batch_loss = loss.item()
+                batch_acc = (preds == labels).float().mean().item()
+
+                print(
+                    f"[Val] Epoch {epoch} Batch {batch_idx} | Loss: {batch_loss:.4f} | Acc: {batch_acc:.4f}"
+                )
+
+    avg_loss = loss_metric.compute().item()
+    avg_accuracy = acc_metric.compute().item()
+
+    # logging
+    wandb.log({
+        "val_loss": avg_loss,
+        "val_accuracy": avg_accuracy,
+        "epoch": epoch,
+    })
+
+    print(f"\n🧪 Validation Epoch {epoch} Summary: Loss: {avg_loss:.4f} | Acc: {avg_accuracy:.4f}")
+    return avg_loss, avg_accuracy
 
 def main():
     args = parse_args()
@@ -187,26 +225,29 @@ def main():
 
     init_wandb(args)
 
-    from token_dataset import TokenDataset
-    from token_dataset import DataLoaderX
+    from token_dataset_v1 import TokenDatasetV1
+    from token_dataset_v1 import DataLoaderX
+    from torch.utils.data import DataLoader
+    from token_dataset_v1 import my_collate_fn
 
     # 数据加载
-    train_dataset = TokenDataset()
+    train_dataset = TokenDatasetV1()
     train_loader = DataLoaderX(
         local_rank=0,
         dataset=train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=1,
+        collate_fn=my_collate_fn
     )
 
-    model = init_model("resnet18")
+    model = init_model(model_name="resnet18", default_weight=False)
     model.fc = nn.Linear(model.fc.in_features, args.num_classes)
     model = model.to(device)
 
     wandb.watch(model, log="all")
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=-2025)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=500000, gamma=0.1)
 
@@ -225,7 +266,6 @@ def main():
         avg_loss, accuracy = train(
             model, train_loader, criterion, optimizer, device, epoch, scheduler
         )
-
         save_checkpoint(model, optimizer, scheduler, epoch, args.checkpoint_dir)
 
     # 最后保存一次
