@@ -108,6 +108,8 @@ class DataLoaderX(DataLoader):
             return
         with torch.cuda.stream(self.stream):
             for k in range(len(self.batch)):
+                features, labels = self.batch[k]
+                
                 self.batch[k] = self.batch[k].to(self.local_rank, non_blocking=True)
 
     def __next__(self):

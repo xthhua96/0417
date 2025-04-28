@@ -30,8 +30,10 @@ class DataLoaderX(DataLoader):
             self.iter = None
             return
         with torch.cuda.stream(self.stream):
-            for k in range(len(self.batch)):
-                self.batch[k] = self.batch[k].to(self.local_rank, non_blocking=True)
+            features, labels = self.batch
+            features = features.to(self.local_rank, non_blocking=True)
+            labels = labels.to(self.local_rank, non_blocking=True)
+            self.batch = (features, labels)
 
     def __next__(self):
         torch.cuda.current_stream().wait_stream(self.stream)
@@ -92,43 +94,48 @@ class TokenDatasetV1(Dataset):
         return self.tokens_list[idx]
 
 
-def preprocess_token_ids(token_ids: List[int]) -> torch.Tensor:
-    tensor = torch.full((256 * 256,), fill_value=0, dtype=torch.float)
-    valid_len = min(len(token_ids), 256 * 256)
-    tensor[:valid_len] = torch.tensor(token_ids[-valid_len:], dtype=torch.float)
+def preprocess_token_ids(token_ids: np.ndarray) -> torch.Tensor:
+    tensor = torch.zeros(256 * 256, dtype=torch.float)
+    valid_indices = token_ids[(token_ids >= 0) & (token_ids < 256 * 256)]
+
+    tensor[valid_indices] = 1.0
     return tensor.view(256, 256).unsqueeze(0).repeat(3, 1, 1)
 
 
 def padding(batch_input: List[List[Tuple[torch.Tensor, torch.Tensor]]]):
     max_len = max(len(l) for l in batch_input)
-    for input in batch_input:
-        while len(input) < max_len:
-            input.append(
+    for input_list in batch_input:
+        while len(input_list) < max_len:
+            input_list.append(
                 (
-                    torch.zeros((3, 256, 256)),
-                    torch.full((1,), fill_value=-2025, dtype=torch.long),
+                    torch.zeros((3, 256, 256), dtype=torch.float),
+                    torch.tensor(-2025, dtype=torch.long)
                 )
             )
-    return batch_input
+    features = []
+    labels = []
+    for i in range(max_len):
+        a_features = []
+        a_labels = []
+        for j in range(len(batch_input)):
+            a_features.append(batch_input[j][i][0])
+            a_labels.append(batch_input[j][i][1])
+        features.append(torch.stack(a_features, dim=0))
+        labels.append(torch.stack(a_labels, dim=0))
+    features = torch.stack(features, dim=0)
+    labels = torch.stack(labels, dim=0)
+    return features, labels
 
 
 def my_collate_fn(batch: List[np.ndarray]):
-    batch_list = []
+    features = []
+    labels = []
     for token_ids in batch:
-        sample_list = []
-        for i in range(1, len(token_ids) - 1):
-            sample_list.append(
-                (
-                    preprocess_token_ids(token_ids[:i]),
-                    torch.tensor(token_ids[i], dtype=torch.long),
-                )
-            )
-        batch_list.append(sample_list)
-
-    batch_list = padding(batch_list)
-
-    features = torch.stack([item[0] for item in batch])
-    labels = torch.stack([item[1] for item in batch])
+        for i in range(1, len(token_ids) - 1, 2):
+            features.append(preprocess_token_ids(token_ids[:i]))
+            labels.append(torch.tensor(token_ids[i], dtype=torch.long)) 
+    features = torch.stack(features, dim=0)
+    labels = torch.stack(labels, dim=0)
     return features, labels
 
 
@@ -139,12 +146,20 @@ if __name__ == "__main__":
     dataloader = DataLoaderX(
         local_rank=0,
         dataset=dataset,
-        batch_size=1,
+        batch_size=16,
         shuffle=True,
-        num_workers=4,
+        num_workers=2,
         collate_fn=my_collate_fn,
     )
-    for batch in dataloader:
+    for i, batch in enumerate(dataloader):
+        # print(i)
         print(batch[0].shape)
         print(batch[1].shape)
-        break
+        if i == 3:
+            break
+
+        # for i in range(batch[0].size(0)):
+        #     print(batch[0][i].shape)
+        #     print(batch[1][i].shape)
+            # break
+        
