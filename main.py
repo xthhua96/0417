@@ -105,6 +105,9 @@ def load_latest_checkpoint(model, optimizer, scheduler, checkpoint_dir, device):
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    new_lr = 0.001
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = new_lr
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
     return checkpoint["epoch"]  # 返回上次训练到的 epoch
@@ -249,7 +252,7 @@ def main():
 
     criterion = nn.CrossEntropyLoss(ignore_index=-2025)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = StepLR(optimizer, step_size=500000, gamma=0.1)
+    scheduler = StepLR(optimizer, step_size=3000000, gamma=0.1)
 
     start_epoch = 1
 
