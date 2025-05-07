@@ -109,7 +109,7 @@ def padding(batch_input: List[List[Tuple[torch.Tensor, torch.Tensor]]]):
             input_list.append(
                 (
                     torch.zeros((3, 256, 256), dtype=torch.float),
-                    torch.tensor(-2025, dtype=torch.long)
+                    torch.tensor(-2025, dtype=torch.long),
                 )
             )
     features = []
@@ -133,7 +133,7 @@ def my_collate_fn(batch: List[np.ndarray]):
     for token_ids in batch:
         for i in range(1, len(token_ids) - 1, 2):
             features.append(preprocess_token_ids(token_ids[:i]))
-            labels.append(torch.tensor(token_ids[i], dtype=torch.long)) 
+            labels.append(torch.tensor(token_ids[i], dtype=torch.long))
     features = torch.stack(features, dim=0)
     labels = torch.stack(labels, dim=0)
     return features, labels
@@ -161,5 +161,4 @@ if __name__ == "__main__":
         # for i in range(batch[0].size(0)):
         #     print(batch[0][i].shape)
         #     print(batch[1][i].shape)
-            # break
-        
+        # break
